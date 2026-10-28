@@ -1,0 +1,64 @@
+name: Test and deploy GitHub Pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm run check
+      - run: npm test
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Verify public HTTPS pages
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          python3 - <<'PY'
+          import os, time, urllib.request
+          base = os.environ['PAGE_URL'].rstrip('/') + '/'
+          assert base.startswith('https://')
+          for path, expected in [('', '참새방앗간'), ('privacy.html', '개인정보처리방침')]:
+              for attempt in range(6):
+                  try:
+                      with urllib.request.urlopen(base + path, timeout=20) as response:
+                          assert response.status == 200
+                          assert expected in response.read().decode('utf-8')
+                      print('Verified HTTP 200:', base + path)
+                      break
+                  except Exception:
+                      if attempt == 5:
+                          raise
+                      time.sleep(10)
+          PY
